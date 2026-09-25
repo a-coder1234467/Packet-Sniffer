@@ -1,3 +1,5 @@
+This is the first code Copilot gave me:
+
 import argparse
 import sys
 from datetime import datetime
