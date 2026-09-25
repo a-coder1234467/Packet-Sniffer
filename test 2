@@ -1,0 +1,164 @@
+This is the second one copilot gave me:
+
+This filters IP addresses, loopback information, and TCP and UDP. 
+
+import argparse
+import sys
+from datetime import datetime
+
+from scapy.all import (
+    conf,
+    get_if_list,
+    sniff,
+    wrpcap,
+    IP,
+    IPv6,
+    TCP,
+    UDP,
+    Loopback,
+)
+
+conf.use_pcap = True
+
+
+def is_loopback_address(address):
+    return (
+        address.startswith("127.")
+        or address == "::1"
+        or address.lower().startswith("fe80::1")
+    )
+
+
+def print_packet(packet):
+    timestamp = datetime.now().strftime("%H:%M:%S")
+
+    if packet.haslayer(IP):
+        ip_layer = packet[IP]
+        version = "IPv4"
+        source = ip_layer.src
+        destination = ip_layer.dst
+        protocol = ip_layer.proto
+    elif packet.haslayer(IPv6):
+        ip_layer = packet[IPv6]
+        version = "IPv6"
+        source = ip_layer.src
+        destination = ip_layer.dst
+        protocol = ip_layer.nh
+    else:
+        return
+
+    if packet.haslayer(TCP):
+        transport = f"TCP {packet[TCP].sport} -> {packet[TCP].dport}"
+    elif packet.haslayer(UDP):
+        transport = f"UDP {packet[UDP].sport} -> {packet[UDP].dport}"
+    else:
+        transport = f"IP protocol {protocol}"
+
+    loopback = (
+        packet.haslayer(Loopback)
+        or is_loopback_address(source)
+        or is_loopback_address(destination)
+    )
+
+    loopback_label = " LOOPBACK" if loopback else ""
+
+    print(
+        f"[{timestamp}] "
+        f"{version}{loopback_label} "
+        f"{source} -> {destination} | {transport}"
+    )
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Capture and identify IP, loopback, TCP, and UDP traffic."
+    )
+
+    parser.add_argument(
+        "-i",
+        "--interface",
+        help="Npcap interface name. Omit to use the default interface.",
+    )
+
+    parser.add_argument(
+        "-f",
+        "--filter",
+        default="ip or ip6",
+        help='BPF filter, such as "tcp or udp" or "tcp port 443".',
+    )
+
+    parser.add_argument(
+        "-c",
+        "--count",
+        type=int,
+        default=0,
+        help="Number of packets to capture. 0 means until Ctrl+C.",
+    )
+
+    parser.add_argument(
+        "-t",
+        "--timeout",
+        type=int,
+        help="Stop after this many seconds.",
+    )
+
+    parser.add_argument(
+        "-o",
+        "--output",
+        default="capture.pcap",
+        help="Output PCAP filename.",
+    )
+
+    parser.add_argument(
+        "--list-interfaces",
+        action="store_true",
+        help="List available Npcap interfaces and exit.",
+    )
+
+    args = parser.parse_args()
+
+    if args.list_interfaces:
+        print("Available interfaces:")
+        for interface in get_if_list():
+            print(f"  {interface}")
+        return 0
+
+    print("Starting capture.")
+    print(f"Interface: {args.interface or 'default'}")
+    print(f"Filter:    {args.filter}")
+    print("Press Ctrl+C to stop.\n")
+
+    try:
+        packets = sniff(
+            iface=args.interface,
+            filter=args.filter,
+            prn=print_packet,
+            count=args.count,
+            timeout=args.timeout,
+            store=True,
+        )
+    except PermissionError:
+        print(
+            "Permission denied. Run PowerShell as Administrator.",
+            file=sys.stderr,
+        )
+        return 1
+    except OSError as error:
+        print(f"Capture failed: {error}", file=sys.stderr)
+        print("Check Npcap and the selected interface.")
+        return 1
+    except KeyboardInterrupt:
+        print("\nCapture stopped.")
+        packets = []
+
+    if packets:
+        wrpcap(args.output, packets)
+        print(f"\nSaved {len(packets)} packets to {args.output}")
+    else:
+        print("\nNo packets captured.")
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
